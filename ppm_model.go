@@ -2,8 +2,10 @@ package rardecode
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"unsafe"
 )
 
 const (
@@ -227,15 +229,32 @@ type subAllocator struct {
 	states []state
 }
 
-func (a *subAllocator) init(maxMB int) {
+// subAllocatorSizes returns the heap sizes of a model of maxMB megabytes and the number of
+// states that hold them.
+func subAllocatorSizes(maxMB int) (heap1MaxBytes, heap2Units int32, n int) {
 	bytes := int32(maxMB) << 20
-	heap2Units := bytes / 8 / unitSize * 7
-	a.heap1MaxBytes = bytes - heap2Units*unitSize
+	heap2Units = bytes / 8 / unitSize * 7
+	heap1MaxBytes = bytes - heap2Units*unitSize
 	// Add one for the case when bytes are not a multiple of unitSize
-	heap1Units := a.heap1MaxBytes/unitSize + 1
+	heap1Units := heap1MaxBytes/unitSize + 1
 	// Calculate total size in state's. Add 1 unit so we can reserve the first unit.
 	// This will allow us to use the zero index as a nil pointer.
-	n := int(1+heap1Units+heap2Units) * 2
+	n = int(1+heap1Units+heap2Units) * 2
+	return heap1MaxBytes, heap2Units, n
+}
+
+// allocBytes returns the bytes init(maxMB) allocates now: 0 when the held slice is reused.
+func (a *subAllocator) allocBytes(maxMB int) int64 {
+	_, _, n := subAllocatorSizes(maxMB)
+	if cap(a.states) > n {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(state{}))
+}
+
+func (a *subAllocator) init(maxMB int) {
+	heap1MaxBytes, _, n := subAllocatorSizes(maxMB)
+	a.heap1MaxBytes = heap1MaxBytes
 	if cap(a.states) > n {
 		a.states = a.states[:n]
 	} else {
@@ -551,6 +570,7 @@ type model struct {
 	escCount    byte
 	prevSym     byte
 	initEsc     byte
+	sizeFn      func(declared, alloc int64) error // see PPMModelSize
 	c           context
 	rc          rangeCoder
 	a           subAllocator
@@ -607,6 +627,13 @@ func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
 	}
 	if !reset {
 		return nil
+	}
+	if m.sizeFn != nil {
+		declared := int64(maxMB) << 20
+		alloc := m.a.allocBytes(maxMB)
+		if err := m.sizeFn(declared, alloc); err != nil {
+			return &PPMModelSizeError{Declared: declared, Alloc: alloc, Err: err}
+		}
 	}
 
 	m.a.init(maxMB)
@@ -1051,3 +1078,17 @@ func (m *model) ReadByte() (byte, error) {
 	m.prevSym = s.sym
 	return s.sym, nil
 }
+
+// PPMModelSizeError is returned when the function set by PPMModelSize refuses the model of a
+// PPMd block. Err is what that function returned.
+type PPMModelSizeError struct {
+	Declared int64 // size the block states, in bytes
+	Alloc    int64 // bytes the model would have allocated
+	Err      error
+}
+
+func (e *PPMModelSizeError) Error() string {
+	return fmt.Sprintf("rardecode: ppm model of %d bytes (%d to allocate) refused: %v", e.Declared, e.Alloc, e.Err)
+}
+
+func (e *PPMModelSizeError) Unwrap() error { return e.Err }

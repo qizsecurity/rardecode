@@ -58,6 +58,8 @@ type decodeReader struct {
 	err    error          // current decoder error output
 	solid  bool           // archive is solid
 
+	ppmModelSize func(declared, alloc int64) error // see PPMModelSize
+
 	win  []byte // sliding window buffer
 	size int    // win length
 	r    int    // index in win for reads (beginning)

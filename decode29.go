@@ -34,6 +34,8 @@ type decoder29 struct {
 
 	lz  *lz29Decoder  // lz decoder
 	ppm *ppm29Decoder // ppm decoder
+
+	refused error // a PPMModelSize refusal: returned by every fill until a decode that resets
 }
 
 func (d *decoder29) version() int { return decode29Ver }
@@ -47,6 +49,7 @@ func (d *decoder29) init(f archiveFile, reset bool, size int64, ver int) {
 	}
 	d.eof = false
 	if reset {
+		d.refused = nil
 		d.initFilters()
 		if d.lz != nil {
 			d.lz.reset()
@@ -198,7 +201,7 @@ func (d *decoder29) parseVMFilter(buf []byte) (*filterBlock, error) {
 }
 
 // readBlockHeader determines and initializes the current decoder for a new decode block.
-func (d *decoder29) readBlockHeader() error {
+func (d *decoder29) readBlockHeader(dr *decodeReader) error {
 	d.br.alignByte()
 	n, err := d.br.readBits(1)
 	if err == nil {
@@ -207,7 +210,12 @@ func (d *decoder29) readBlockHeader() error {
 			if d.ppm == nil {
 				d.ppm = newPPM29Decoder()
 			}
+			d.ppm.m.sizeFn = dr.ppmModelSize
 			err = d.ppm.init(d.br)
+			var se *PPMModelSizeError
+			if errors.As(err, &se) {
+				d.refused = err
+			}
 		} else {
 			d.isPPM = false
 			if d.lz == nil {
@@ -224,6 +232,9 @@ func (d *decoder29) readBlockHeader() error {
 }
 
 func (d *decoder29) fill(dr *decodeReader) error {
+	if d.refused != nil {
+		return d.refused
+	}
 	if d.eof {
 		return io.EOF
 	}
@@ -231,7 +242,7 @@ func (d *decoder29) fill(dr *decodeReader) error {
 	for dr.notFull() {
 		var err error
 		if !d.hdrRead {
-			if err = d.readBlockHeader(); err != nil {
+			if err = d.readBlockHeader(dr); err != nil {
 				return err
 			}
 		}

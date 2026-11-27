@@ -386,6 +386,7 @@ func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockL
 	if h.decVer != decodeNone {
 		if pr.dr == nil {
 			pr.dr = new(decodeReader)
+			pr.dr.ppmModelSize = pr.opt.ppmModelSize
 		}
 		// doesn't make sense for the dictionary to be larger than the file
 		if !h.Solid && !h.UnKnownSize && h.winSize > h.UnPackedSize {
