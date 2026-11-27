@@ -40,6 +40,7 @@ type options struct {
 	pass            *string // password for encrypted volumes
 	skipCheck       bool
 	openCheck       bool
+	ppmModelSize    func(declared, alloc int64) error // called before a PPMd model is allocated
 }
 
 // An Option is used for optional archive extraction settings.
@@ -56,6 +57,23 @@ func BufferSize(size int) Option {
 // Any size above 64GB will be ignored. Any size below 256kB will prevent any file from being decoded.
 func MaxDictionarySize(size int64) Option {
 	return func(o *options) { o.maxDictSize = size }
+}
+
+// PPMModelSize sets a function called before the PPMd model of a RAR 1.5 to 4.x archive is
+// allocated. A block of that format states the size of its model (1 to 256 MB) inside the
+// compressed stream, and the allocation follows at once, so the size is known only while
+// decoding.
+//
+// declared is the size the block states, in bytes (the RAR figure, MB<<20). alloc is the
+// number of bytes of Go memory this block's model allocates now: 0 when the model of an earlier
+// block is large enough and is reused. The function is called once per block that resets the
+// model, before anything is allocated for it. If it returns an error, nothing is allocated, the
+// decode stops and Read and Next return a *PPMModelSizeError that wraps it; the reader returns
+// the same error to every later Read of the archive. A model held from an earlier block is not
+// released. The function may be called from several goroutines if several readers share it.
+// If it is not set, nothing is called and nothing changes.
+func PPMModelSize(fn func(declared, alloc int64) error) Option {
+	return func(o *options) { o.ppmModelSize = fn }
 }
 
 // MaxReadFileSize sets the maximum size of a file that can be read by RarFS.ReadFile().

@@ -381,6 +381,11 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 }
 
 func (a *archive15) parseArcBlock(h *blockHeader15) error {
+	// The flags are only a statement of the archive when the header's CRC holds (RAR 3.x technote:
+	// HEAD_CRC is the CRC of fields HEAD_TYPE to RESERVED2), so the CRC is checked before any flag is acted on.
+	if err := h.checkCRC(); err != nil {
+		return err
+	}
 	a.encrypted = h.flags&arcEncrypted > 0
 	a.multi = h.flags&arcVolume > 0
 	a.oldNaming = h.flags&arcNewNaming == 0
@@ -388,7 +393,7 @@ func (a *archive15) parseArcBlock(h *blockHeader15) error {
 	if a.encrypted && a.pass == nil {
 		return ErrArchiveEncrypted
 	}
-	return h.checkCRC()
+	return nil
 }
 
 func (a *archive15) parseBlockEnd(h *blockHeader15) error {
